@@ -1,0 +1,26 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "watchTaskName",
+        "command": "dapr",
+        "type": "process",
+         "linux": {
+          "options": {
+            "env": {
+              // The FileSystemWatcher used by default wasnt working for me on linux, so I switched to the polling watcher.
+              "DOTNET_USE_POLLING_FILE_WATCHER": "true"
+            }
+          }
+        },
+        "args": [
+          "run",
+          "--app-protocol grpc --app-id serviceA --app-port 5002 --dapr-grpc-port 50002 -- dotnet watch run --launch-profile https",
+          "${workspaceFolder}/<path-to-project>.csproj",
+          "/property:GenerateFullPaths=true",
+          "/consoleloggerparameters:NoSummary"
+        ],
+        "problemMatcher": "$msCompile"
+      }
+    ]
+  }
