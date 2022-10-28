@@ -6,8 +6,9 @@
 
 为了保持WebApi和Grpc事件订阅代码的一致性，Dapr Side Care 与微服务Grpc通讯的情况下实现如下写法来订阅并处理事件。
 
+```csharp
 [Topic("pubsub", "TestTopic")]
-        public override Task<HelloReply> TestTopicEvent(TestTopicEventRequest request, ServerCallContext context)
+public override Task<HelloReply> TestTopicEvent(TestTopicEventRequest request, ServerCallContext context)
         {
             string message = "TestTopicEvent" + request.EventData.Name;
             Console.WriteLine(message);
@@ -16,13 +17,16 @@
                 Message = message
             });
         }
+```
 
 其原理是配置builder.Services.AddGrpc().AddJsonTranscoding(); 然后在Grpc方法Proto文件中配置google.api.http 选项，增加Grpc方法将转码为JSON WebApi调用。
 
+```go
 option (google.api.http) = {
       post: "/v1/greeter/testtopicevent",
       body: "eventData"
     };
+```
 
 然后重写Dapr提供的AppCallback.AppCallbackBaseGrpc的OnTopicEvent方法，通过httpClient动态调用该Web Api。
 
