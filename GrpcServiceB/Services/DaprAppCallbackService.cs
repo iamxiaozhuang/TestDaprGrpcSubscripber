@@ -5,6 +5,7 @@ using Grpc.Core;
 using Microsoft.Net.Http.Headers;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using static Dapr.AppCallback.Autogen.Grpc.v1.TopicEventResponse.Types;
@@ -24,6 +25,7 @@ namespace GrpcServiceB.Services
             _httpClient4TopicEvent = httpClientFactory.CreateClient("HttpClient4TopicEvent");
         }
 
+        
 
         public async override Task<ListTopicSubscriptionsResponse> ListTopicSubscriptions(Empty request, ServerCallContext context)
         {

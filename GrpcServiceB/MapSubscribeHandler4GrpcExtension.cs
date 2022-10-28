@@ -11,121 +11,110 @@ namespace GrpcServiceB
     public static class MapSubscribeHandler4GrpcExtension
     {
 
-        public static List<Subscription> AllSubcriptions {get;set;}
-
 
         public static List<Subscription> GetDaprSubscriptions(this EndpointDataSource dataSource, ILoggerFactory loggerFactory, SubscribeOptions options = null)
         {
-            if (AllSubcriptions != null)
-            {
-                return AllSubcriptions;
-            }
-            else
-            {
-                var logger = loggerFactory.CreateLogger("DaprTopicSubscription");
-                var subscriptions = dataSource.Endpoints
-                    .OfType<RouteEndpoint>()
-                    .Where(e => e.Metadata.GetOrderedMetadata<ITopicMetadata>().Any(t => t.Name != null)) // only endpoints which have TopicAttribute with not null Name.
-                    .SelectMany(e =>
+            var logger = loggerFactory.CreateLogger("DaprTopicSubscription");
+            var subscriptions = dataSource.Endpoints
+                .OfType<RouteEndpoint>()
+                .Where(e => e.Metadata.GetOrderedMetadata<ITopicMetadata>().Any(t => t.Name != null)) // only endpoints which have TopicAttribute with not null Name.
+                .SelectMany(e =>
+                {
+                    var topicMetadata = e.Metadata.GetOrderedMetadata<ITopicMetadata>();
+                    var originalTopicMetadata = e.Metadata.GetOrderedMetadata<IOriginalTopicMetadata>();
+
+                    var subs = new List<(string PubsubName, string Name, string DeadLetterTopic, bool? EnableRawPayload, string Match, int Priority, Dictionary<string, string[]> OriginalTopicMetadata, string MetadataSeparator, RoutePattern RoutePattern)>();
+
+                    for (int i = 0; i < topicMetadata.Count(); i++)
                     {
-                        var topicMetadata = e.Metadata.GetOrderedMetadata<ITopicMetadata>();
-                        var originalTopicMetadata = e.Metadata.GetOrderedMetadata<IOriginalTopicMetadata>();
+                        subs.Add((topicMetadata[i].PubsubName,
+                            topicMetadata[i].Name,
+                            (topicMetadata[i] as IDeadLetterTopicMetadata)?.DeadLetterTopic,
+                            (topicMetadata[i] as IRawTopicMetadata)?.EnableRawPayload,
+                            topicMetadata[i].Match,
+                            topicMetadata[i].Priority,
+                            originalTopicMetadata.Where(m => (topicMetadata[i] as IOwnedOriginalTopicMetadata)?.OwnedMetadatas?.Any(o => o.Equals(m.Id)) == true || string.IsNullOrEmpty(m.Id))
+                                                 .GroupBy(c => c.Name)
+                                                 .ToDictionary(m => m.Key, m => m.Select(c => c.Value).Distinct().ToArray()),
+                            (topicMetadata[i] as IOwnedOriginalTopicMetadata)?.MetadataSeparator,
+                            e.RoutePattern));
+                    }
 
-                        var subs = new List<(string PubsubName, string Name, string DeadLetterTopic, bool? EnableRawPayload, string Match, int Priority, Dictionary<string, string[]> OriginalTopicMetadata, string MetadataSeparator, RoutePattern RoutePattern)>();
+                    return subs;
+                })
+                .Distinct()
+                .GroupBy(e => new { e.PubsubName, e.Name })
+                .Select(e => e.OrderBy(e => e.Priority))
+                .Select(e =>
+                {
+                    var first = e.First();
+                    var rawPayload = e.Any(e => e.EnableRawPayload.GetValueOrDefault());
+                    var metadataSeparator = e.FirstOrDefault(e => !string.IsNullOrEmpty(e.MetadataSeparator)).MetadataSeparator ?? ",";
+                    var rules = e.Where(e => !string.IsNullOrEmpty(e.Match)).ToList();
+                    var defaultRoutes = e.Where(e => string.IsNullOrEmpty(e.Match)).Select(e => RoutePatternToString(e.RoutePattern)).ToList();
+                    //var defaultRoute = defaultRoutes.FirstOrDefault();
+                    var defaultRoute = defaultRoutes.LastOrDefault();
 
-                        for (int i = 0; i < topicMetadata.Count(); i++)
-                        {
-                            subs.Add((topicMetadata[i].PubsubName,
-                                topicMetadata[i].Name,
-                                (topicMetadata[i] as IDeadLetterTopicMetadata)?.DeadLetterTopic,
-                                (topicMetadata[i] as IRawTopicMetadata)?.EnableRawPayload,
-                                topicMetadata[i].Match,
-                                topicMetadata[i].Priority,
-                                originalTopicMetadata.Where(m => (topicMetadata[i] as IOwnedOriginalTopicMetadata)?.OwnedMetadatas?.Any(o => o.Equals(m.Id)) == true || string.IsNullOrEmpty(m.Id))
-                                                     .GroupBy(c => c.Name)
-                                                     .ToDictionary(m => m.Key, m => m.Select(c => c.Value).Distinct().ToArray()),
-                                (topicMetadata[i] as IOwnedOriginalTopicMetadata)?.MetadataSeparator,
-                                e.RoutePattern));
-                        }
-
-                        return subs;
-                    })
-                    .Distinct()
-                    .GroupBy(e => new { e.PubsubName, e.Name })
-                    .Select(e => e.OrderBy(e => e.Priority))
-                    .Select(e =>
+                    //multiple identical names. use comma separation.
+                    var metadata = new Metadata(e.SelectMany(c => c.OriginalTopicMetadata).GroupBy(c => c.Key).ToDictionary(c => c.Key, c => string.Join(metadataSeparator, c.SelectMany(c => c.Value).Distinct())));
+                    if (rawPayload || options?.EnableRawPayload is true)
                     {
-                        var first = e.First();
-                        var rawPayload = e.Any(e => e.EnableRawPayload.GetValueOrDefault());
-                        var metadataSeparator = e.FirstOrDefault(e => !string.IsNullOrEmpty(e.MetadataSeparator)).MetadataSeparator ?? ",";
-                        var rules = e.Where(e => !string.IsNullOrEmpty(e.Match)).ToList();
-                        var defaultRoutes = e.Where(e => string.IsNullOrEmpty(e.Match)).Select(e => RoutePatternToString(e.RoutePattern)).ToList();
-                        //var defaultRoute = defaultRoutes.FirstOrDefault();
-                        var defaultRoute = defaultRoutes.LastOrDefault();
+                        metadata.Add(Metadata.RawPayload, "true");
+                    }
 
-                        //multiple identical names. use comma separation.
-                        var metadata = new Metadata(e.SelectMany(c => c.OriginalTopicMetadata).GroupBy(c => c.Key).ToDictionary(c => c.Key, c => string.Join(metadataSeparator, c.SelectMany(c => c.Value).Distinct())));
-                        if (rawPayload || options?.EnableRawPayload is true)
+                    if (logger != null)
+                    {
+                        if (defaultRoutes.Count > 1)
                         {
-                            metadata.Add(Metadata.RawPayload, "true");
+                            logger.LogError("A default subscription to topic {name} on pubsub {pubsub} already exists.", first.Name, first.PubsubName);
                         }
 
-                        if (logger != null)
+                        var duplicatePriorities = rules.GroupBy(e => e.Priority)
+                          .Where(g => g.Count() > 1)
+                          .ToDictionary(x => x.Key, y => y.Count());
+
+                        foreach (var entry in duplicatePriorities)
                         {
-                            if (defaultRoutes.Count > 1)
-                            {
-                                logger.LogError("A default subscription to topic {name} on pubsub {pubsub} already exists.", first.Name, first.PubsubName);
-                            }
-
-                            var duplicatePriorities = rules.GroupBy(e => e.Priority)
-                              .Where(g => g.Count() > 1)
-                              .ToDictionary(x => x.Key, y => y.Count());
-
-                            foreach (var entry in duplicatePriorities)
-                            {
-                                logger.LogError("A subscription to topic {name} on pubsub {pubsub} has duplicate priorities for {priority}: found {count} occurrences.", first.Name, first.PubsubName, entry.Key, entry.Value);
-                            }
+                            logger.LogError("A subscription to topic {name} on pubsub {pubsub} has duplicate priorities for {priority}: found {count} occurrences.", first.Name, first.PubsubName, entry.Key, entry.Value);
                         }
+                    }
 
-                        var subscription = new Subscription()
+                    var subscription = new Subscription()
+                    {
+                        Topic = first.Name,
+                        PubsubName = first.PubsubName,
+                        Metadata = metadata.Count > 0 ? metadata : null,
+                    };
+
+                    if (first.DeadLetterTopic != null)
+                    {
+                        subscription.DeadLetterTopic = first.DeadLetterTopic;
+                    }
+
+                    // Use the V2 routing rules structure
+                    if (rules.Count > 0)
+                    {
+                        subscription.Routes = new Routes
                         {
-                            Topic = first.Name,
-                            PubsubName = first.PubsubName,
-                            Metadata = metadata.Count > 0 ? metadata : null,
+                            Rules = rules.Select(e => new Rule
+                            {
+                                Match = e.Match,
+                                Path = RoutePatternToString(e.RoutePattern),
+                            }).ToList(),
+                            Default = defaultRoute,
                         };
+                    }
+                    // Use the V1 structure for backward compatibility.
+                    else
+                    {
+                        subscription.Route = defaultRoute;
+                    }
 
-                        if (first.DeadLetterTopic != null)
-                        {
-                            subscription.DeadLetterTopic = first.DeadLetterTopic;
-                        }
+                    return subscription;
+                })
+                .OrderBy(e => (e.PubsubName, e.Topic));
 
-                        // Use the V2 routing rules structure
-                        if (rules.Count > 0)
-                        {
-                            subscription.Routes = new Routes
-                            {
-                                Rules = rules.Select(e => new Rule
-                                {
-                                    Match = e.Match,
-                                    Path = RoutePatternToString(e.RoutePattern),
-                                }).ToList(),
-                                Default = defaultRoute,
-                            };
-                        }
-                        // Use the V1 structure for backward compatibility.
-                        else
-                        {
-                            subscription.Route = defaultRoute;
-                        }
-
-                        return subscription;
-                    })
-                    .OrderBy(e => (e.PubsubName, e.Topic));
-
-                AllSubcriptions = subscriptions.ToList();
-
-                return AllSubcriptions;
-            }
+            return subscriptions.ToList();
         }
 
         private static string RoutePatternToString(RoutePattern routePattern)

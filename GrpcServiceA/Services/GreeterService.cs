@@ -23,7 +23,7 @@ namespace GrpcServiceA.Services
             await _daprClient.PublishEventAsync<EventData>("pubsub", "TestTopic", eventData);
             return new HelloReply
             {
-                Message = "Hello124 " + request.Name
+                Message = "Hello" + request.Name
             };
         }
     }

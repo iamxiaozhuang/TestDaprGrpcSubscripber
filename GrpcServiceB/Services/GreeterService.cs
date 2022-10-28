@@ -23,7 +23,7 @@ namespace GrpcServiceB.Services
         [Topic("pubsub", "TestTopic")]
         public override Task<HelloReply> TestTopicEvent(TestTopicEventRequest request, ServerCallContext context)
         {
-            string message = "TestTopicEvent Message" + request.EventData.Name;
+            string message = "TestTopicEvent" + request.EventData.Name;
             Console.WriteLine(message);
             return Task.FromResult(new HelloReply
             {
